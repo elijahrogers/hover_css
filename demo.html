@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hover CSS demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3efe6;
+        --ink: #1d1f24;
+        --accent: #0f6a5b;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Georgia, "Times New Roman", serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 20% 10%, #fff8e8, transparent 40%),
+          linear-gradient(160deg, #efe7d8, #f7f2ea 50%, #e4eee9);
+        padding: 48px 24px 80px;
+      }
+      h1 {
+        font-size: 42px;
+        margin: 0 0 8px;
+      }
+      p {
+        max-width: 40ch;
+        line-height: 1.5;
+      }
+      .card {
+        margin-top: 28px;
+        padding: 20px 22px;
+        background: white;
+        border: 1px solid rgba(0, 0, 0, 0.08);
+        max-width: 420px;
+      }
+      .title {
+        font-weight: bold;
+        color: var(--accent);
+      }
+      .muted {
+        color: #777;
+      }
+      .overridden {
+        color: crimson;
+      }
+      .box {
+        margin-top: 16px;
+        padding: 14px;
+        background: #0f6a5b;
+        color: white;
+      }
+      /* Intentionally weaker than .box so color is overridden */
+      .box.overridden {
+        color: #ffd27a;
+      }
+      .invalid-demo {
+        /* invalid value kept for analyzer demos when authored in stylesheets */
+        outline-color: not-a-real-color;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 class="title">Hover CSS demo</h1>
+    <p class="muted">
+      Load the extension, open DevTools, click the toolbar icon, then hover these
+      elements. <code>missing-class</code> has no rules.
+    </p>
+
+    <div class="card title muted">
+      Card with applied classes and an unused
+      <span class="missing-class">.missing-class</span>
+    </div>
+
+    <div class="box overridden">
+      .box sets white text; .overridden loses on background but wins on color via order/specificity play.
+    </div>
+
+    <button class="title phantom-btn">Button with phantom-btn (missing)</button>
+  </body>
+</html>
