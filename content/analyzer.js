@@ -1,5 +1,8 @@
 ;(() => {
   const IMPORTANT_RE = /\s*!important\s*$/i
+  const fetchedSheetCache = new Map()
+  const fetchedFailCache = new Set()
+  let prefetchPromise = null
 
   function escapeClassForSelector(className) {
     if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
@@ -8,15 +11,23 @@
     return className.replace(/([^a-zA-Z0-9_-])/g, "\\$1")
   }
 
+  function escapeForRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  }
+
   function selectorReferencesClass(selectorText, className) {
     if (!selectorText) return false
-    const escaped = escapeClassForSelector(className)
-    const re = new RegExp(`(^|[^a-zA-Z0-9_-])\\.${escaped}($|[^a-zA-Z0-9_-])`)
+    // Match the CSS-escaped class token as it appears in selectorText
+    // (e.g. class "!rounded" → ".\!rounded"). Only an end boundary is required so
+    // compound selectors like ".foo.\!rounded" still attribute correctly.
+    const token = `.${escapeClassForSelector(className)}`
+    const re = new RegExp(
+      `${escapeForRegex(token)}(?=$|[^a-zA-Z0-9_-])`
+    )
     return re.test(selectorText)
   }
 
   function parseSpecificity(selectorText) {
-    // Approximate specificity for a single selector (no :where/:is nuance)
     let a = 0
     let b = 0
     let c = 0
@@ -25,7 +36,6 @@
         c += 1
         return " "
       }
-      // :not() args ignored for simplicity; pseudo-classes count as classes
       b += 1
       return " "
     })
@@ -63,7 +73,6 @@
         rule.type === CSSRule.LAYER_BLOCK_RULE ||
         rule.cssRules
       ) {
-        // Respect media/supports when possible
         if (rule.type === CSSRule.MEDIA_RULE) {
           try {
             if (rule.media && rule.media.mediaText && !matchMedia(rule.media.mediaText).matches) {
@@ -85,26 +94,113 @@
     }
   }
 
-  function collectStyleSheets() {
-    const sheets = []
-    let opaqueCount = 0
-
+  function listDocumentSheets() {
+    const entries = []
     for (const sheet of document.styleSheets) {
       try {
-        // Accessing cssRules throws for cross-origin sheets
         void sheet.cssRules
-        sheets.push(sheet)
+        entries.push({ kind: "live", sheet, href: sheet.href || null })
       } catch {
-        opaqueCount += 1
+        entries.push({
+          kind: "opaque",
+          sheet: null,
+          href: sheet.href || null
+        })
       }
     }
-
-    return { sheets, opaqueCount }
+    return entries
   }
 
-  function getDeclarations(styleRule) {
+  async function fetchCssText(url) {
+    const response = await chrome.runtime.sendMessage({
+      type: "hover-css:fetch-css",
+      url
+    })
+    return response
+  }
+
+  async function getFetchedSheet(url) {
+    if (fetchedSheetCache.has(url)) return fetchedSheetCache.get(url)
+    if (fetchedFailCache.has(url)) return null
+
+    const result = await fetchCssText(url)
+    if (!result?.ok || typeof result.text !== "string") {
+      fetchedFailCache.add(url)
+      return null
+    }
+
+    try {
+      const sheet = new CSSStyleSheet({ baseURL: url })
+      sheet.replaceSync(result.text)
+      const wrapped = { sheet, href: url }
+      fetchedSheetCache.set(url, wrapped)
+      return wrapped
+    } catch {
+      // baseURL option may be unsupported — retry without it
+      try {
+        const sheet = new CSSStyleSheet()
+        sheet.replaceSync(result.text)
+        const wrapped = { sheet, href: url }
+        fetchedSheetCache.set(url, wrapped)
+        return wrapped
+      } catch {
+        fetchedFailCache.add(url)
+        return null
+      }
+    }
+  }
+
+  async function resolveSheets() {
+    const entries = listDocumentSheets()
+    const resolved = []
+    let opaqueCount = 0
+    let fetchedCount = 0
+
+    for (const entry of entries) {
+      if (entry.kind === "live") {
+        resolved.push({
+          cssRules: entry.sheet.cssRules,
+          href: entry.href || "(inline)"
+        })
+        continue
+      }
+
+      if (!entry.href) {
+        opaqueCount += 1
+        continue
+      }
+
+      const fetched = await getFetchedSheet(entry.href)
+      if (!fetched) {
+        opaqueCount += 1
+        continue
+      }
+
+      fetchedCount += 1
+      resolved.push({
+        cssRules: fetched.sheet.cssRules,
+        href: fetched.href
+      })
+    }
+
+    return { sheets: resolved, opaqueCount, fetchedCount }
+  }
+
+  async function prefetchSheets() {
+    if (prefetchPromise) return prefetchPromise
+    prefetchPromise = (async () => {
+      const entries = listDocumentSheets().filter((e) => e.kind === "opaque" && e.href)
+      await Promise.all(entries.map((e) => getFetchedSheet(e.href)))
+    })().finally(() => {
+      prefetchPromise = null
+    })
+    return prefetchPromise
+  }
+
+  function getDeclarations(styleRule, fallbackHref) {
     const decls = []
     const style = styleRule.style
+    const href = styleRule.parentStyleSheet?.href || fallbackHref || "(inline)"
     for (let i = 0; i < style.length; i++) {
       const prop = style.item(i)
       const raw = style.getPropertyValue(prop).trim()
@@ -123,7 +219,7 @@
         important,
         invalid,
         selector: styleRule.selectorText,
-        href: styleRule.parentStyleSheet?.href || "(inline)"
+        href
       })
     }
     return decls
@@ -148,9 +244,9 @@
     return parts
   }
 
-  function analyzeElement(element) {
+  async function analyzeElement(element) {
     const classNames = [...element.classList]
-    const { sheets, opaqueCount } = collectStyleSheets()
+    const { sheets, opaqueCount, fetchedCount } = await resolveSheets()
 
     const matchedRules = []
     const orderState = { i: 0 }
@@ -172,7 +268,7 @@
               selector,
               order,
               specificity: parseSpecificity(selector),
-              declarations: getDeclarations(rule).map((d) => ({
+              declarations: getDeclarations(rule, sheet.href).map((d) => ({
                 ...d,
                 selector
               }))
@@ -185,19 +281,15 @@
       }
     }
 
-    // Build cascade winners across ALL matched rules (element-level)
     const winners = new Map()
-    const allDecls = []
 
     for (const matched of matchedRules) {
       for (const decl of matched.declarations) {
         const entry = {
           ...decl,
           specificity: matched.specificity,
-          order: matched.order,
-          fromClass: null
+          order: matched.order
         }
-        allDecls.push(entry)
 
         if (decl.invalid) continue
 
@@ -208,7 +300,6 @@
           continue
         }
 
-        // !important beats normal
         if (entry.important !== prev.important) {
           if (entry.important) winners.set(key, entry)
           continue
@@ -276,9 +367,10 @@
       id: element.id || "",
       classes: classAnalyses,
       opaqueSheets: opaqueCount,
+      fetchedSheets: fetchedCount,
       matchedRuleCount: matchedRules.length
     }
   }
 
-  window.HoverCssAnalyzer = { analyzeElement }
+  window.HoverCssAnalyzer = { analyzeElement, prefetchSheets }
 })()

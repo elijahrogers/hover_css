@@ -9,6 +9,7 @@
   let lastAnalysis = null
   let pendingX = 0
   let pendingY = 0
+  let analyzeSeq = 0
 
   let candidateElement = null
   let dwellTimer = null
@@ -52,14 +53,21 @@
     window.HoverCssOverlay.show(el, analysis)
   }
 
-  function commitElement(el) {
+  async function commitElement(el) {
     if (!enabled || !el) return
     clearDwell()
     if (el === lastElement && lastAnalysis) {
       window.HoverCssOverlay.syncPosition(el)
       return
     }
-    paint(el, window.HoverCssAnalyzer.analyzeElement(el))
+    const seq = ++analyzeSeq
+    try {
+      const analysis = await window.HoverCssAnalyzer.analyzeElement(el)
+      if (!enabled || seq !== analyzeSeq) return
+      paint(el, analysis)
+    } catch {
+      if (!enabled || seq !== analyzeSeq) return
+    }
   }
 
   function startDwell(el) {
@@ -200,6 +208,7 @@
     if (enabled) return
     enabled = true
     await window.HoverCssOverlay.ensure()
+    window.HoverCssAnalyzer.prefetchSheets?.().catch(() => {})
     document.addEventListener("mousemove", onMouseMove, true)
     document.addEventListener("click", onClick, true)
     document.addEventListener("keydown", onKeyDown, true)
@@ -212,6 +221,7 @@
     enabled = false
     lastElement = null
     lastAnalysis = null
+    analyzeSeq += 1
     clearHoverTimers()
     if (rafId) {
       cancelAnimationFrame(rafId)

@@ -179,7 +179,7 @@
       <div class="selector-line">
         <span class="tag">${escapeHtml(analysis.tagName)}</span>${idPart}
       </div>
-      ${analysis.opaqueSheets > 0 ? `<div class="meta">${analysis.opaqueSheets} cross-origin sheet${analysis.opaqueSheets === 1 ? "" : "s"} hidden</div>` : ""}
+      ${analysis.opaqueSheets > 0 ? `<div class="meta">${analysis.opaqueSheets} sheet${analysis.opaqueSheets === 1 ? "" : "s"} still unreadable</div>` : ""}
       <div class="classes">${classChips}</div>
     `
 

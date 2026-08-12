@@ -1,5 +1,83 @@
 const enabledByTab = new Map()
 const devtoolsPorts = new Map()
+const cssTextCache = new Map()
+const cssInflight = new Map()
+const MAX_IMPORT_DEPTH = 8
+
+function importPattern() {
+  return /@import\s+(?:url\s*\(\s*)?(["']?)([^"')\s]+)\1\s*\)?([^;]*);/gi
+}
+
+function isFetchableCssUrl(url) {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+  } catch {
+    return false
+  }
+}
+
+async function fetchRawCss(url) {
+  const response = await fetch(url, { credentials: "omit", cache: "force-cache" })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  return response.text()
+}
+
+async function fetchCssResolved(url, depth = 0, stack = []) {
+  if (!isFetchableCssUrl(url)) {
+    return { ok: false, error: "unsupported-url" }
+  }
+  if (stack.includes(url)) {
+    return { ok: true, text: "/* circular @import omitted */", url }
+  }
+  if (cssTextCache.has(url)) {
+    return cssTextCache.get(url)
+  }
+  if (cssInflight.has(url)) {
+    return cssInflight.get(url)
+  }
+
+  const task = (async () => {
+    try {
+      let text = await fetchRawCss(url)
+      if (depth < MAX_IMPORT_DEPTH) {
+        const parts = []
+        let lastIndex = 0
+        const importRe = importPattern()
+        let match
+        while ((match = importRe.exec(text))) {
+          parts.push(text.slice(lastIndex, match.index))
+          const importUrl = new URL(match[2], url).href
+          const media = (match[3] || "").trim()
+          const nested = await fetchCssResolved(importUrl, depth + 1, [...stack, url])
+          if (nested.ok) {
+            if (media) parts.push(`@media ${media} {\n${nested.text}\n}\n`)
+            else parts.push(`\n${nested.text}\n`)
+          } else {
+            parts.push(`/* failed @import ${importUrl}: ${nested.error} */\n`)
+          }
+          lastIndex = match.index + match[0].length
+        }
+        parts.push(text.slice(lastIndex))
+        text = parts.join("")
+      }
+      const result = { ok: true, text, url }
+      cssTextCache.set(url, result)
+      return result
+    } catch (err) {
+      const result = { ok: false, error: String(err?.message || err), url }
+      cssTextCache.set(url, result)
+      return result
+    } finally {
+      cssInflight.delete(url)
+    }
+  })()
+
+  cssInflight.set(url, task)
+  return task
+}
 
 function setBadge(tabId, enabled) {
   chrome.action.setBadgeText({
@@ -110,6 +188,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: false, reason: "devtools-closed" })
     }
     return false
+  }
+
+  if (message?.type === "hover-css:fetch-css") {
+    const url = message.url
+    if (typeof url !== "string" || !url) {
+      sendResponse({ ok: false, error: "missing-url" })
+      return false
+    }
+    fetchCssResolved(url).then((result) => sendResponse(result))
+    return true
   }
 
   return false

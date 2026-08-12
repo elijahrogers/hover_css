@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "Hover to inspect element classes and spot missing, invalid, or overridden CSS.",
   "permissions": ["storage", "activeTab"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
   },
