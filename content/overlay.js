@@ -8,6 +8,14 @@
     unknown: "unknown"
   }
 
+  const STATUS_SORT = {
+    missing: 0,
+    broken: 1,
+    unknown: 2,
+    partial: 3,
+    applied: 4
+  }
+
   let host = null
   let shadow = null
   let highlightEl = null
@@ -156,8 +164,13 @@
     highlightEl.classList.add("visible")
 
     const idPart = analysis.id ? `<span class="id">#${escapeHtml(analysis.id)}</span>` : ""
-    const classChips = analysis.classes.length
-      ? analysis.classes.map((c, i) => `
+    const sortedClasses = [...analysis.classes].sort((a, b) => {
+      const byStatus = (STATUS_SORT[a.status] ?? 99) - (STATUS_SORT[b.status] ?? 99)
+      if (byStatus !== 0) return byStatus
+      return a.className.localeCompare(b.className)
+    })
+    const classChips = sortedClasses.length
+      ? sortedClasses.map((c, i) => `
           <div class="chip status-${c.status}" style="animation-delay:${i * 20}ms">
             <span class="status-dot"></span>
             <div>
