@@ -163,6 +163,24 @@
     highlightEl.style.height = `${Math.round(rect.height)}px`
     highlightEl.classList.add("visible")
 
+    const inlineDecls = analysis.inline || []
+    const inlineStatus = inlineDecls.some((d) => d.invalid && !d.applied)
+      ? "broken"
+      : inlineDecls.some((d) => d.overridden || d.invalid)
+        ? "partial"
+        : "applied"
+    const inlineBlock = inlineDecls.length
+      ? `
+          <div class="chip status-${inlineStatus}">
+            <span class="status-dot"></span>
+            <div>
+              <div class="inline-label">style</div>
+              ${renderDecls(inlineDecls)}
+            </div>
+            <span class="status-label">inline</span>
+          </div>
+        `
+      : ""
     const idPart = analysis.id ? `<span class="id">#${escapeHtml(analysis.id)}</span>` : ""
     const sortedClasses = [...analysis.classes].sort((a, b) => {
       const byStatus = (STATUS_SORT[a.status] ?? 99) - (STATUS_SORT[b.status] ?? 99)
@@ -193,7 +211,7 @@
         <span class="tag">${escapeHtml(analysis.tagName)}</span>${idPart}
       </div>
       ${analysis.opaqueSheets > 0 ? `<div class="meta">${analysis.opaqueSheets} sheet${analysis.opaqueSheets === 1 ? "" : "s"} still unreadable</div>` : ""}
-      <div class="classes">${classChips}</div>
+      <div class="classes">${inlineBlock}${classChips}</div>
     `
 
     panelEl.scrollTop = 0

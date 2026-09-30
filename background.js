@@ -1,12 +1,10 @@
+import { expandImportText } from "./shared/expand-imports.js"
+
 const enabledByTab = new Map()
 const devtoolsPorts = new Map()
 const cssTextCache = new Map()
 const cssInflight = new Map()
 const MAX_IMPORT_DEPTH = 8
-
-function importPattern() {
-  return /@import\s+(?:url\s*\(\s*)?(["']?)([^"')\s]+)\1\s*\)?([^;]*);/gi
-}
 
 function isFetchableCssUrl(url) {
   try {
@@ -43,25 +41,9 @@ async function fetchCssResolved(url, depth = 0, stack = []) {
     try {
       let text = await fetchRawCss(url)
       if (depth < MAX_IMPORT_DEPTH) {
-        const parts = []
-        let lastIndex = 0
-        const importRe = importPattern()
-        let match
-        while ((match = importRe.exec(text))) {
-          parts.push(text.slice(lastIndex, match.index))
-          const importUrl = new URL(match[2], url).href
-          const media = (match[3] || "").trim()
-          const nested = await fetchCssResolved(importUrl, depth + 1, [...stack, url])
-          if (nested.ok) {
-            if (media) parts.push(`@media ${media} {\n${nested.text}\n}\n`)
-            else parts.push(`\n${nested.text}\n`)
-          } else {
-            parts.push(`/* failed @import ${importUrl}: ${nested.error} */\n`)
-          }
-          lastIndex = match.index + match[0].length
-        }
-        parts.push(text.slice(lastIndex))
-        text = parts.join("")
+        text = await expandImportText(text, url, (importUrl) => {
+          return fetchCssResolved(importUrl, depth + 1, [...stack, url])
+        })
       }
       const result = { ok: true, text, url }
       cssTextCache.set(url, result)
